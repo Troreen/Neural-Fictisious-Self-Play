@@ -15,9 +15,9 @@ class ASNet(nn.Module):
             action_dim (int): Dimensionality of the action space.
         """
         super(ASNet, self).__init__()
-        self.fc1 = nn.Linear(state_dim, 128)  # First fully connected layer
-        self.fc2 = nn.Linear(128, 128)  # Second fully connected layer
-        self.head = nn.Linear(128, action_dim) # Output layer
+        self.fc1 = nn.Linear(state_dim, 256)  # First fully connected layer
+        self.fc2 = nn.Linear(256, 256)  # Second fully connected layer
+        self.head = nn.Linear(256, action_dim) # Output layer
 
     def forward(self, state: torch.Tensor, legal_actions_mask: torch.Tensor) -> torch.Tensor:
         """Forward pass through the network.

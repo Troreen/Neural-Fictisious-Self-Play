@@ -7,7 +7,7 @@ import pandas as pd
 import torch
 from tqdm import tqdm
 
-from simple_nfsp.utilsagents.eval_agents import NashEquilibriumAgent
+from simple_nfsp.agents.eval_agents import NashEquilibriumAgent
 from simple_nfsp.agents.nfsp_agent import NFSPAgent
 from simple_nfsp.games.kuhn_poker import KuhnPoker
 

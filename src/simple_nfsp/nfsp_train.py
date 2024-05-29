@@ -3,13 +3,12 @@ import time
 
 import matplotlib.pyplot as plt
 import numpy as np
-import pandas as pd
 import torch
 from tqdm import tqdm
 
 from simple_nfsp.agents.eval_agents import RandomAgent
 from simple_nfsp.agents.nfsp_agent import NFSPAgent
-from simple_nfsp.games.cheat import CheatGame
+from simple_nfsp.games.kuhn_poker import KuhnPoker
 
 
 def evaluate_agent(env, agent, num_episodes=10):
@@ -19,21 +18,27 @@ def evaluate_agent(env, agent, num_episodes=10):
         rl_turn = 0 if i % 2 == 0 else 1
         state = env.reset()
         done = False
+        last_move_rl = False
         while not done:
             legal_actions = env.legal_actions()
             if env.current_player == rl_turn:
                 # No exploration during evaluation
+                last_move_rl = True
                 action = agent.select_action(state, legal_actions, epsilon=0)
             else:
+                last_move_rl = False
                 try:
                     action = eval_agent.select_action(legal_actions)
                 except:
-                    print(env.state, env.current_player, env.legal_actions())
+                    print(env.get_info_state(), env.current_player, env.legal_actions())
                     raise ValueError("No legal actions available")
             next_state, reward, done, _ = env.step(action)
             state = next_state
-            if done:
-                total_rewards += reward
+            if reward < -2:
+                print(env.current_player, env.legal_actions())
+                print("Played an illegal move")
+        reward = reward if last_move_rl else -reward
+        total_rewards += reward
     average_reward = total_rewards / num_episodes
     return average_reward
 
@@ -68,13 +73,13 @@ def nfsp_runner(
     epsilon_start=1.0,
     epsilon_end=0.1,
     epsilon_decay=0.995,
-    batch_size=2,
-    num_episodes=10000,
-    eval_freq=10,
+    batch_size=64,
+    num_episodes=4000,
+    eval_freq=2000,
     eval_episodes=1000,
     target_update_interval=100,
-    avg_reward_window_size=100,
-    save_freq=100,
+    avg_reward_window_size=500,
+    save_freq=500,
     save_dir="models",
     save_prefix="nfsp",
     plot_folder="plots",
@@ -113,6 +118,7 @@ def nfsp_runner(
     # Initialization for plotting
     evaluation_scores = []
     average_rewards = []
+    total_rewards = []
 
     now = time.time()  # Get the current time for saving the files
 
@@ -153,7 +159,7 @@ def nfsp_runner(
             agent.update_target_network()
 
         # Logging
-        average_rewards.append(total_ep_rewards)
+        total_rewards.append(total_ep_rewards)
 
         if episode % eval_freq == 0:
             tqdm.write("Evaluation in progress...")
@@ -168,10 +174,13 @@ def nfsp_runner(
             )
             tqdm.write("\033[1;32m" + f"Saved model at episode {episode}" + "\033[0m")
 
-    rewards_series = pd.Series(average_rewards)
-
-    # Calculate Exponential Moving Average
-    ema_rewards = rewards_series.ewm(span=avg_reward_window_size).mean().values
+    # Calculate Moving Average
+    for i in range(10, num_episodes):
+        if i >= avg_reward_window_size:
+            window_avg = np.mean(total_rewards[i - avg_reward_window_size : i])
+        else:
+            window_avg = np.mean(total_rewards[:i + 1])
+        average_rewards.append(window_avg)                                    
 
     # Ensure the output directory exists
     output_dir = f"{plot_folder}/{now}"
@@ -188,10 +197,7 @@ def nfsp_runner(
 
     # Plotting the smoothed moving average rewards
     plt.figure(figsize=(10, 6))  # Optionally specify the figure size
-    episodes_x = np.linspace(
-        avg_reward_window_size, num_episodes, len(ema_rewards)
-    )  # Adjust as needed
-    plt.plot(episodes_x, ema_rewards)  # Use ema_rewards if using EMA
+    plt.plot(range(10, num_episodes), average_rewards)
     plt.xlabel("Episodes")
     plt.ylabel(f"Moving Average Reward (Window={avg_reward_window_size})")
     plt.title("NFSP Agent Training - Moving Average Reward")
@@ -200,5 +206,5 @@ def nfsp_runner(
 
 if __name__ == "__main__":
     nfsp_runner(
-        env=CheatGame(),
+        env=KuhnPoker(),
     )

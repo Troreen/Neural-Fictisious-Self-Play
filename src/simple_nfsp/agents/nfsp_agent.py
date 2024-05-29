@@ -46,8 +46,8 @@ class NFSPAgent:
         # Whether the last action was best-response based
         self.last_action_best_response = False
 
-        self.rl_memory = RLMemory(capacity=10000)  # RL experiences memory
-        self.sl_memory = SLMemory(capacity=10000)  # SL experiences memory
+        self.rl_memory = RLMemory(capacity=20000)  # RL experiences memory
+        self.sl_memory = SLMemory(capacity=20000)  # SL experiences memory
 
         self.br_net = BRNet(state_dim, action_dim).to(device)  # Best-response network
         self.as_net = ASNet(state_dim, action_dim).to(device)  # Average-strategy network

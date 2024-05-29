@@ -10,12 +10,23 @@ class KuhnPoker:
 
         self.max_history_len = 3
         self.state_space = (
-            self.max_history_len + 4
+            self.max_history_len + 5
         )  # players card + history len + players bet + opponents bet
         self.action_space = 2  # pass or bet
 
         self.reset()
 
+
+    def legal_actions(self) -> List[int]:
+        """Get the legal actions for the current player.
+
+        Returns:
+            List[int]: The legal actions.
+        """
+        if self.history in ["bb", "pbb", "bp", "pp", "pbp"]:
+            return []
+        return [0, 1]
+    
     def reset(self) -> List[int]:
         """Reset the game state and return the initial information state.
 
@@ -51,6 +62,7 @@ class KuhnPoker:
         """
         # Players Card, Action History, Turn, Player0 Bet, Player1 Bet
         return [
+            self.current_player,
             self.state[self.current_player],
             *self.history_to_list(),
             len(self.history),
@@ -135,9 +147,10 @@ class KuhnPoker:
         """
         if not self.done:
             res = [0, 0]
-        res = (
-            [-self.state[2], self.state[3]]
-            if self.winner == 1
-            else [self.state[2], -self.state[3]]
-        )
+        else:
+            res = (
+                [-self.state[2], self.state[3]]
+                if self.winner == 1
+                else [self.state[2], -self.state[3]]
+                )
         return res if player == -1 else res[player]

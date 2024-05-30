@@ -16,17 +16,6 @@ class KuhnPoker:
 
         self.reset()
 
-
-    def legal_actions(self) -> List[int]:
-        """Get the legal actions for the current player.
-
-        Returns:
-            List[int]: The legal actions.
-        """
-        if self.history in ["bb", "pbb", "bp", "pp", "pbp"]:
-            return []
-        return [0, 1]
-    
     def reset(self) -> List[int]:
         """Reset the game state and return the initial information state.
 
@@ -122,7 +111,7 @@ class KuhnPoker:
             self.get_info_state(),
             self.get_reward(self.current_player),
             self.done,
-            {},
+            {"last_player": 1 - self.current_player},
         )
 
     def determine_winner(self):
@@ -135,6 +124,16 @@ class KuhnPoker:
             self.winner = 1
         else:
             raise ValueError(f"Invalid history: {self.history}")
+
+    def legal_actions(self) -> List[int]:
+        """Get the legal actions for the current player based on the current state.
+
+        Returns:
+            List[int]: The legal actions.
+        """
+        if self.history in ["bb", "pbb", "bp", "pp", "pbp"]:
+            return []
+        return [0, 1]
 
     def get_reward(self, player: int = -1) -> List[int]:
         """Get the reward for the specified player.
@@ -152,5 +151,5 @@ class KuhnPoker:
                 [-self.state[2], self.state[3]]
                 if self.winner == 1
                 else [self.state[2], -self.state[3]]
-                )
+            )
         return res if player == -1 else res[player]

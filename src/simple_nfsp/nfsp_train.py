@@ -3,44 +3,40 @@ import time
 
 import matplotlib.pyplot as plt
 import numpy as np
+import pandas as pd
 import torch
 from tqdm import tqdm
 
-from simple_nfsp.agents.eval_agents import RandomAgent
+from simple_nfsp.agents.eval_agents import RandomAgent, NashEquilibriumAgent
 from simple_nfsp.agents.nfsp_agent import NFSPAgent
+from simple_nfsp.games.cheat import CheatGame
 from simple_nfsp.games.kuhn_poker import KuhnPoker
 
 
-def evaluate_agent(env, agent, num_episodes=10):
+def evaluate_agent(agent, num_episodes=10):
+    env = KuhnPoker()
     total_rewards = 0
-    eval_agent = RandomAgent()
     for i in range(num_episodes):
-        rl_turn = 0 if i % 2 == 0 else 1
+        # Select the first player interchangeably
+        eval_agent = RandomAgent()  # RandomAgent() or NashEquilibriumAgent()
+        players = [agent, eval_agent] if i % 2 == 0 else [eval_agent, agent]
         state = env.reset()
         done = False
-        last_move_rl = False
+        cumulative_rewards = {0: 0, 1: 0}
         while not done:
-            legal_actions = env.legal_actions()
-            if env.current_player == rl_turn:
-                # No exploration during evaluation
-                last_move_rl = True
-                action = agent.select_action(state, legal_actions, epsilon=0)
+            player = players[env.current_player]
+            if isinstance(player, RandomAgent):
+                action = player.select_action(env.legal_actions())
             else:
-                last_move_rl = False
-                try:
-                    action = eval_agent.select_action(legal_actions)
-                except:
-                    print(env.get_info_state(), env.current_player, env.legal_actions())
-                    raise ValueError("No legal actions available")
-            next_state, reward, done, _ = env.step(action)
-            state = next_state
-            if reward < -2:
-                print(env.current_player, env.legal_actions())
-                print("Played an illegal move")
-        reward = reward if last_move_rl else -reward
-        total_rewards += reward
+                legal_actions = env.legal_actions()
+                action = player.select_action(state, legal_actions, epsilon=0)
+            state, reward, done, _ = env.step(action)
+            cumulative_rewards[env.current_player] += reward
+        rl_turn = 0 if i % 2 == 0 else 1
+        total_rewards += cumulative_rewards[rl_turn] - cumulative_rewards[1 - rl_turn]
     average_reward = total_rewards / num_episodes
     return average_reward
+
 
 
 def save_checkpoint(agent, save_dir):
@@ -75,10 +71,10 @@ def nfsp_runner(
     epsilon_decay=0.995,
     batch_size=64,
     num_episodes=4000,
-    eval_freq=2000,
-    eval_episodes=1000,
+    eval_freq=100,
+    eval_episodes=10000,
     target_update_interval=100,
-    avg_reward_window_size=500,
+    avg_reward_window_size=1000,
     save_freq=500,
     save_dir="models",
     save_prefix="nfsp",
@@ -117,7 +113,6 @@ def nfsp_runner(
 
     # Initialization for plotting
     evaluation_scores = []
-    average_rewards = []
     total_rewards = []
 
     now = time.time()  # Get the current time for saving the files
@@ -132,7 +127,11 @@ def nfsp_runner(
         while not done:  # Continue until the episode is done
             legal_actions = env.legal_actions()
             if len(legal_actions) == 0:
-                print(env.state, env.current_player, env.legal_actions())
+                np.set_printoptions(threshold=np.inf)
+                print(env.next_action, env.legal_actions(), env.players[env.current_player].hand)
+                print(f"Challenge: {env.challenge_declared}")
+                print(f"Num Cards Declared: {env.num_cards_declared}")
+                print(f"Cards Played: {env.cards_played}")
                 raise ValueError("No legal actions available")
             action = agent.select_action(state, legal_actions, epsilon)
 
@@ -163,7 +162,7 @@ def nfsp_runner(
 
         if episode % eval_freq == 0:
             tqdm.write("Evaluation in progress...")
-            evaluation_score = evaluate_agent(env, agent, eval_episodes)
+            evaluation_score = evaluate_agent(agent, eval_episodes)
             evaluation_scores.append(evaluation_score)
             tqdm.write(f"Evaluation score after episode {episode}: {evaluation_score}")
 
@@ -174,13 +173,11 @@ def nfsp_runner(
             )
             tqdm.write("\033[1;32m" + f"Saved model at episode {episode}" + "\033[0m")
 
-    # Calculate Moving Average
-    for i in range(10, num_episodes):
-        if i >= avg_reward_window_size:
-            window_avg = np.mean(total_rewards[i - avg_reward_window_size : i])
-        else:
-            window_avg = np.mean(total_rewards[:i + 1])
-        average_rewards.append(window_avg)                                    
+    # avg reward
+    avg_rewards_for_plot = [
+        np.mean(total_rewards[i : i + avg_reward_window_size])
+        for i in range(0, len(total_rewards) - avg_reward_window_size)
+    ]
 
     # Ensure the output directory exists
     output_dir = f"{plot_folder}/{now}"
@@ -197,7 +194,7 @@ def nfsp_runner(
 
     # Plotting the smoothed moving average rewards
     plt.figure(figsize=(10, 6))  # Optionally specify the figure size
-    plt.plot(range(10, num_episodes), average_rewards)
+    plt.plot(range(avg_reward_window_size, len(avg_rewards_for_plot) + avg_reward_window_size), avg_rewards_for_plot)
     plt.xlabel("Episodes")
     plt.ylabel(f"Moving Average Reward (Window={avg_reward_window_size})")
     plt.title("NFSP Agent Training - Moving Average Reward")

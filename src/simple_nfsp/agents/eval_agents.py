@@ -10,10 +10,11 @@ class NashEquilibriumAgent:
         self.position = position  # 0 for the first player, 1 for the second player
 
     def select_action(self, state):
-        card = state[0]
-        history = state[1:4]
-        turn = state[4]
-        bets = state[5:]
+        player = state[0]
+        card = state[1]
+        history = state[2:5]
+        turn = state[5]
+        bets = state[6:]
         alpha = random.uniform(
             0, 1 / 3
         )  # α in [0, 1/3] for the first player's mixed strategy

@@ -1,5 +1,3 @@
-# agents/memory.py
-
 import random
 from collections import deque
 from typing import Any, List, Tuple
@@ -43,6 +41,8 @@ class RLMemory:
         Returns:
             List[Tuple[Any, Any, Any, Any, bool]]: A batch of sampled experiences.
         """
+        if len(self.memory) < batch_size:
+            raise ValueError("Not enough samples in the buffer to meet the requested batch size")
         return random.sample(self.memory, batch_size)
 
     def __len__(self) -> int:
@@ -86,7 +86,7 @@ class SLMemory:
             batch_size (int): The number of experiences to sample.
 
         Returns:
-            Tuple[List[Any], List[Any], List[Any]: A batch of sampled experiences.
+            List[Tuple[Any, Any, Any]]: A batch of sampled experiences.
         """
         if len(self.reservoir_sampling) < batch_size:
             raise ValueError("Not enough samples in the buffer to meet the requested batch size")

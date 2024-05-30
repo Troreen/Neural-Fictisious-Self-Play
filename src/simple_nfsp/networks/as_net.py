@@ -1,8 +1,6 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import List, Union
-
 
 class ASNet(nn.Module):
     """Defines the neural network architecture for the average-strategy network."""
@@ -15,9 +13,8 @@ class ASNet(nn.Module):
             action_dim (int): Dimensionality of the action space.
         """
         super(ASNet, self).__init__()
-        self.fc1 = nn.Linear(state_dim, 256)  # First fully connected layer
-        self.fc2 = nn.Linear(256, 256)  # Second fully connected layer
-        self.head = nn.Linear(256, action_dim) # Output layer
+        self.fc1 = nn.Linear(state_dim, 128)  # First fully connected layer
+        self.head = nn.Linear(128, action_dim)  # Output layer
 
     def forward(self, state: torch.Tensor, legal_actions_mask: torch.Tensor) -> torch.Tensor:
         """Forward pass through the network.
@@ -30,9 +27,9 @@ class ASNet(nn.Module):
             torch.Tensor: Output tensor.
         """
         x = F.relu(self.fc1(state))
-        x = F.relu(self.fc2(x))
         logits = self.head(x)
 
+        # Apply legal actions mask
         masked_logits = logits + (legal_actions_mask - 1) * 1e9  # Use a large negative number to mask
         probabilities = F.softmax(masked_logits, dim=-1)
         return probabilities

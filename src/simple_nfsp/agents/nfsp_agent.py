@@ -1,14 +1,11 @@
 from typing import List, Union
-
 import numpy as np
 import torch
 import torch.nn.functional as F
 import torch.optim as optim
-
 from simple_nfsp.agents.memory import RLMemory, SLMemory
 from simple_nfsp.networks.as_net import ASNet
 from simple_nfsp.networks.br_net import BRNet
-
 
 class NFSPAgent:
     """Implements the NFSP agent, combining both RL and SL strategies."""
@@ -18,8 +15,8 @@ class NFSPAgent:
         state_dim: int,
         action_dim: int,
         anticipatory_param: float,
-        rl_learning_rate: float = 1e-4,
-        sl_learning_rate: float = 1e-4,
+        rl_learning_rate: float = 1e-2,
+        sl_learning_rate: float = 1e-2,
         gamma: float = 0.99,
         device: str = "cpu",
     ) -> None:
@@ -27,13 +24,10 @@ class NFSPAgent:
 
         Args:
             state_dim (int): Dimensionality of the state space.
-            action_dims (int): Dimensionality of the action space.
-            anticipatory_param (float): Anticipatory parameter to balance between BR and AS
-                strategies.
-            rl_learning_rate (float, optional): Learning rate for the best-response network.
-                Defaults to 1e-4.
-            sl_learning_rate (float, optional): Learning rate for the average-strategy network.
-                Defaults to 1e-4.
+            action_dim (int): Dimensionality of the action space.
+            anticipatory_param (float): Anticipatory parameter to balance between BR and AS strategies.
+            rl_learning_rate (float, optional): Learning rate for the best-response network. Defaults to 1e-2.
+            sl_learning_rate (float, optional): Learning rate for the average-strategy network. Defaults to 1e-2.
             gamma (float, optional): Discount factor for future rewards. Defaults to 0.99.
             device (str, optional): Device to run the agent on. Defaults to "cpu".
         """
@@ -46,8 +40,8 @@ class NFSPAgent:
         # Whether the last action was best-response based
         self.last_action_best_response = False
 
-        self.rl_memory = RLMemory(capacity=20000)  # RL experiences memory
-        self.sl_memory = SLMemory(capacity=20000)  # SL experiences memory
+        self.rl_memory = RLMemory(capacity=100000)  # RL experiences memory
+        self.sl_memory = SLMemory(capacity=100000)  # SL experiences memory
 
         self.br_net = BRNet(state_dim, action_dim).to(device)  # Best-response network
         self.as_net = ASNet(state_dim, action_dim).to(device)  # Average-strategy network
@@ -71,6 +65,10 @@ class NFSPAgent:
         Returns:
             Union[int, List[int]]: The selected action(s).
         """
+        # Ensure legal_actions is non-empty
+        if not legal_actions:
+            raise ValueError("legal_actions must be non-empty")
+
         # Convert state to tensor for network input
         state_tensor = torch.FloatTensor(state).unsqueeze(0).to(self.device)
         legal_actions_mask = torch.zeros(self.action_dim).to(self.device)
@@ -92,8 +90,7 @@ class NFSPAgent:
                     q_values = self.br_net(state_tensor, legal_actions_mask)
                     action = q_values.argmax().item()
             else:
-                probabilities  = self.as_net(state_tensor, legal_actions_mask)
-
+                probabilities = self.as_net(state_tensor, legal_actions_mask)
                 action = torch.multinomial(probabilities, 1).item()
 
         return action
@@ -135,15 +132,11 @@ class NFSPAgent:
         self.sl_memory.add_experience(state, action, legal_actions_mask)
 
     def update_target_network(self) -> None:
-        """Updates the target best-response network with the weights of the current best-response
-        network.
-        """
+        """Updates the target best-response network with the weights of the current best-response network."""
         self.target_br_net.load_state_dict(self.br_net.state_dict())
 
     def train(self, batch_size: int) -> None:
         """Trains both the Best-Response Network (BR-Net) and the Average-Strategy Network (AS-Net)
-
-        Trains both the Best-Response Network (BR-Net) and the Average-Strategy Network (AS-Net)
         using sampled experiences from their respective memories.
 
         Args:
@@ -204,15 +197,10 @@ class NFSPAgent:
             sl_states = torch.tensor(sl_states, dtype=torch.float32).to(self.device)
             sl_actions = torch.tensor(sl_actions, dtype=torch.int64).to(self.device)
 
-            # Efficient tensor construction for legal actions mask
             # Convert legal actions to masks
             sl_legal_actions_masks = torch.zeros((batch_size, self.action_dim), device=self.device)
             for idx, actions in enumerate(sl_legal_actions):
                 sl_legal_actions_masks[idx, actions] = 1
-
-            # AS-Net supervised learning update
-            action_probs = self.as_net(sl_states, sl_legal_actions_masks)
-            as_loss = F.cross_entropy(action_probs, sl_actions)
 
             # AS-Net supervised learning update
             action_probs = self.as_net(sl_states, sl_legal_actions_masks)

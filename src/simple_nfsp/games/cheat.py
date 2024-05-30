@@ -5,6 +5,7 @@ from simple_nfsp.games.components.deck import Deck, NUM_UNIQUE_CARDS, NUM_REPLIC
 from simple_nfsp.games.components.player import Player
 import logging
 import torch
+from collections import Counter
 
 logger = logging.getLogger(__name__)
 
@@ -42,13 +43,10 @@ class CheatGame:
 
         self.invalid_penalty = -99
 
-        self.player_hand_size = NUM_UNIQUE_CARDS
-        self.max_unique_pile_len = NUM_UNIQUE_CARDS
-
         # (players action space + opponents turn exposure) * max number of rounds
         # players action space = challenge (1) + num_cards (1) + rank (1) + cards (4) = 7
         # opponents turn exposure = num_cards (1) + rank (1) + challenge (1) = 3
-        self.max_history_len = 10 * self.max_number_of_rounds * 2
+        self.max_history_len = 10 * self.max_number_of_rounds
 
         # Maximum info_state size
         self.state_space = len(self.players[0].hand) + self.max_history_len
@@ -76,13 +74,10 @@ class CheatGame:
         self.next_action = 1  # first action is always num_cards
         self.reset_turn()
 
-        self.state = np.array(
-            [], dtype=int
-        )  # empty state - we are using padding for stability
         self.player_history = [[] for _ in range(self.num_players)]
 
         self.current_player = 0
-        self.central_pile = np.zeros(NUM_UNIQUE_CARDS, dtype=int)
+        self.central_pile = np.zeros(NUM_UNIQUE_CARDS + 1, dtype=int)
         self.if_last_claim_bluff = False
 
         self.done = False
@@ -98,11 +93,16 @@ class CheatGame:
         if self.next_action == 0: # challenge
             return [0, 1]
         elif self.next_action == 1: # num_cards
-            return list(range(1, min(len(self.players[self.current_player].hand) + 1, 5)))
+            n_cards = list(range(1, min(sum(self.players[self.current_player].hand) + 1 , 5)))
+            assert len(n_cards) > 0, f"No cards to play: {self.players[self.current_player].hand}"
+            return n_cards
         elif self.next_action == 2: # rank
             return list(range(1, 14))
         else: # cards
-            return self.players[self.current_player].get_unique_cards()
+            player_cards = self.players[self.current_player].get_cards_as_list()
+            valid_cards_list = list(set(player_cards))
+            assert len(valid_cards_list) != 0, f"No valid cards to play: {player_cards}, {valid_cards_list}"
+            return valid_cards_list # order doesn't matter since we are using this for masking
 
     def process_action(self, action: int):
         """Process the action taken by the player.
@@ -145,6 +145,8 @@ class CheatGame:
         self.cards_played = [None] * 4
         self.challenge_declared = None
         self.turn_over = False
+        self.last_challenge_result = [None, None] # keeps the number of cards end of a challenge
+                                                  # for reward calculation
 
     def get_info_state(self) -> np.array:
         """Get the current information state.
@@ -168,7 +170,7 @@ class CheatGame:
                     (0, pad_len),
                     mode="constant",
                 ),
-            ]
+            ],
         )
 
     def step(self, action: int) -> Tuple[List[int], int, bool, Dict]:
@@ -192,14 +194,13 @@ class CheatGame:
                 self.get_info_state(),
                 self.invalid_penalty,
                 self.done,
-                {},
+                {"last_player": self.current_player},
             )
 
         # process the action
         self.process_action(action)
 
         # update history
-        self.state = np.append(self.state, action)
         self.player_history[self.current_player].append(action)
 
         # opponent also gets exposed to partial information
@@ -207,35 +208,35 @@ class CheatGame:
         if self.next_action - 1 < 3:
             self.player_history[1 - self.current_player].append(action)
 
+        # remove played cards
+        self.players[self.current_player].remove_card(self.cards_played[self.next_action - 3])
+
+        # update central pile
+        self.add_to_pile(self.cards_played[self.next_action - 3])
+
         # Check if the turn is over first
         if not self.turn_over:
             return (
                 self.get_info_state(),
                 0,
                 self.done,
-                {},
+                {"last_player": self.current_player},
             )
 
         # action handling
         if self.challenge_declared:
-            self.resolve_challenge()
+            self.resolve_challenge() # next player to play handled inside
         else:
-            # update players hand
-            self.players[self.current_player].remove_cards(self.cards_played)
-
-            # update central pile
-            self.add_to_pile(self.cards_played)
-
             # Check if bluff
             self.if_last_claim_bluff = self.is_bluff()
+
+            # update current player
+            self.next_player()
         self.reset_turn()
 
         # check for terminal state
         if self.is_terminal():
             self.done = True  # For stopping recalling step()
-        else:
-            # update current player
-            self.next_player()
 
         # Update the number of rounds
         self.num_rounds += 1
@@ -244,24 +245,20 @@ class CheatGame:
             self.get_info_state(),
             self.get_reward(1 - self.current_player),
             self.done,
-            {},
+            {"last_player": 1 - self.current_player},
         )
 
     def next_player(self) -> None:
         """Update the current player to the next player."""
         self.current_player = 1 - self.current_player
 
-    def add_to_pile(self, cards: List[int]) -> None:
-        """Add cards to the central pile.
+    def add_to_pile(self, card: int) -> None:
+        """Add card to the central pile.
 
         Args:
-            cards (List[int]): The cards to add to the central pile.
+            card (int): The card to add to the central pile.
         """
-        assert len(cards) == 4, "Invalid cards representation."
-        cards_to_pile = np.zeros(NUM_UNIQUE_CARDS, dtype=int)
-        for card in cards:
-            cards_to_pile[card - 1] += 1
-        self.central_pile += cards_to_pile
+        self.central_pile[card] += 1
 
     def is_bluff(self) -> bool:
         """Checks if the action was a bluff.
@@ -280,14 +277,22 @@ class CheatGame:
 
         If the previous player's claim was a bluff, the previous player receives the central pile.
         Otherwise, the challenging player receives the central pile.
+
+        Player who wins the challenge gets to play first in the next round.
         """
+        num_cards = sum(self.central_pile)
         if self.if_last_claim_bluff:
             self.players[1 - self.current_player].add_cards(self.central_pile)
+            self.last_challenge_result[1 - self.current_player] = -num_cards
+            self.last_challenge_result[self.current_player] = num_cards
         else:
             self.players[self.current_player].add_cards(self.central_pile)
+            self.last_challenge_result[self.current_player] = -num_cards
+            self.last_challenge_result[1 - self.current_player] = num_cards
+            self.next_player()
 
         # reset central pile
-        self.central_pile = np.zeros(NUM_UNIQUE_CARDS, dtype=int)
+        self.central_pile = np.zeros(NUM_UNIQUE_CARDS + 1, dtype=int)
 
     def is_terminal(self) -> bool:
         """Check if the game is in a terminal state.
@@ -299,7 +304,7 @@ class CheatGame:
             bool: True if the game is in a terminal state, False otherwise.
         """
         return self.num_rounds >= self.max_number_of_rounds or any(
-            len(player.hand) == 0 for player in self.players
+            sum(player.hand) == 0 for player in self.players
         )
 
     def get_reward(self, player_idx: int) -> int:
@@ -319,8 +324,11 @@ class CheatGame:
         ):  # game is over - this doesn't necessarily have to be a reward condition
             return (
                 -1
-                if len(self.players[player_idx].hand)
-                > len(self.players[1 - player_idx].hand)
+                if sum(self.players[player_idx].hand)
+                > sum(self.players[1 - player_idx].hand)
                 else 1
             )
+        elif self.last_challenge_result[player_idx] is not None:
+            # round is over, winner of the round gets rewarded
+            return self.last_challenge_result[player_idx]
         return 0
